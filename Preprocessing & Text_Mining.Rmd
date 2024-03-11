@@ -1,0 +1,288 @@
+---
+title: "Preprocessing & Text Mining"
+output: html_document
+date: "2024-01-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Following the pre-processing and Text Mining techniques have been used draw insight from text provided and produce informative visualization.
+
+#### Load Libraries
+
+```{r install & Load , message = FALSE}
+libraries <- c("tm", "tidytext", "ggplot2", "wordcloud", "syuzhet", "dplyr", "tibble", "textstem", "textdata", "tidyr")
+
+#install.packages(libraries) # Comment out after first execution
+
+for (lib in libraries) { 
+  library(lib, character.only=TRUE) #Library takes function names without quotes, character only must be used in a loop of this kind.
+}
+```
+
+#### Load Dataset
+
+```{r Load Dataset}
+# Define file path
+filepath <- 'D:\\1_Dilshan\\7_USW_MSc in Data Science\\4_Data Mining & Statistical Modeling\\Assignment 1\\MS4S09_CW_Book_Reviews.csv'
+
+# convert the dataframe into tibble
+book_data <- as_tibble(read.csv(filepath, stringsAsFactors = FALSE)) 
+
+# Inspect summary and first few rows of data
+print(summary(book_data))
+print(head(book_data))
+```
+
+The given data set consists of 11 columns and 59,296 rows
+
+#### Data Selection and clening
+
+```{r Select Data for text mining}
+# Select Columns
+book_data_1 <- book_data %>% 
+  select(c("Title","Rating", "Review_title", "Review_text", "Publisher", "First_author", "Genre")) 
+
+book_data_1 <- na.omit(book_data_1) # Removes all rows containing null values
+
+book_data_1$Review_no <- 1:nrow(book_data_1)
+```
+
+In column selection the "Reviewer_id" is not taken where it is not a unique id so created a column of "Review_no" as a unique number
+
+#### count and filter
+
+```{r count}
+
+# count number of reviews by Title
+book_data_counts <- count(book_data_1,Title , sort=TRUE)
+book_data_counts <- book_data_counts[book_data_counts$n > 100, ]# Filter book titles with more than 100 reviews
+
+summary(book_data_counts) # Print summary statistics to see min. max. and average no. of reviews
+```
+
+The selected book titles have minimum of 105 number of reviews and maximum of 276 number of reviews. Number of reviews each books are not equal.
+
+#### Data Sampling
+
+```{r}
+
+# Randomly select 5 book titles
+set.seed(1) # Set random seed for repeatability
+
+# Take sample of 5 book titles
+sample_index<- sample(length(unique(book_data_counts$Title)), 5) #returns index for sample
+sampled_book_title <- unique(book_data_counts$Title)[sample_index] # Take book titles at index defined previously
+
+book_data_1 <- book_data_1 %>%
+  filter(Title %in% sampled_book_title) # Filter only the above sampled 5 book titles
+
+# Initialize an empty dataframe to store sampled reviews
+sampled_reviews <- data.frame()
+
+# Loop through each selected titles and sample 100 reviews
+for (book in sampled_book_title) {
+  reviews <- book_data_1 %>%
+    filter(Title == book) %>%
+    sample_n(size = 100, replace = TRUE)
+  sampled_reviews <- bind_rows(sampled_reviews, reviews)
+}
+book_data_1 <- sampled_reviews
+# Display the sampled reviews
+head(book_data_1)
+print((count(book_data_1,Title , sort=TRUE)))
+
+```
+
+In the above, out of 20 books (books having more than 100 reviews) 5 have been selected randomly. Then 100 of reviews per each book has been selected randomly using the for loop. Final output is five books each having 100 reviews.
+
+#### Tokenize Reviews
+
+```{r tokenize}
+word_tokenized_data <- book_data_1 %>%
+  unnest_tokens(output = word, input = "Review_text", token = "words", to_lower = TRUE) # Tokenize review column by word
+
+bigram_tokenized_data <- book_data_1 %>%
+  unnest_tokens(output = bigram, input = "Review_text", token = "ngrams", n=2, to_lower = TRUE) # Tokenize review column to bigrams
+```
+
+##### Initial Exploratory Analysis
+
+Performs some initial exploratory analysis to see the most common words and bigrams in our reviews.
+
+##### Plot of top 10 words
+
+```{r initial word plot}
+word_counts <- word_tokenized_data %>%
+  count(word, sort = TRUE) # Counts the occurences of each word and sorts.
+
+ggplot(word_counts[1:10, ], aes(x = reorder(word, n), y = n)) + # Plots first 10 rows of word counts, with word (ordered by n) on the x axis and n on the y axis
+  geom_col(fill = "blue") + # Sets colours of bars to blue
+  labs(x = "Words", y = "Frequency") + # Defines x and y labels
+  coord_flip() + # Flips coordinates so words go on the y axis (for readability)
+  theme_minimal() # Sets theme of visualisation
+```
+
+##### Word Cloud
+
+```{r Word Cloud}
+suppressWarnings({
+  set.seed(1)
+  wordcloud(words = word_counts$word, 
+            freq = word_counts$n, 
+            min.freq = 10, 
+            random.order=FALSE, 
+            random.color=FALSE, 
+            colors = sample(colors(), size = 10)
+            )
+})
+```
+
+#### Plot of top 10 bigrams
+
+```{r initial bigram plot}
+bigram_counts <- bigram_tokenized_data %>%
+  count(bigram, sort = TRUE)
+
+ggplot(bigram_counts[1:10, ], aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "blue") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+It can be conclude that from the above word cloud and the horizontal barchart the highest frequent word is "the" and follows by "and", "of", "to", "a" where these does not carry any meaning of the subject of the each book title. further it could be observed from the bi gram as well. Accordingly to get a meaningful idea needed to clean the above text data as follows.
+
+#### Cleaning Data
+
+```{r clean data}
+# Define additional stop words
+additional_stop_words <- tibble(word = c("book", "read"))
+
+# Combine with existing stop words
+stop_words <- bind_rows(stop_words, additional_stop_words)
+
+clean_tokens <- word_tokenized_data %>% 
+  anti_join(stop_words, by = "word") # Removes stop words
+  
+clean_tokens$word <- gsub("[^a-zA-Z ]", "", clean_tokens$word) %>% # Remove special characters and numbers
+  na_if("") %>% # Replaces empty strings with NA
+  lemmatize_words() # Lemmatizes text
+
+# Removes null values
+clean_tokens <- na.omit(clean_tokens) 
+
+# Text can be untokenized and then retokenized to get cleaned bigrams
+
+untokenized_data <- clean_tokens %>%
+  group_by(Review_no) %>%
+  summarize(clean_review = paste(word, collapse = " ")) %>% # for each review number, takes every word and joins them with spaces
+  inner_join(book_data_1[,c("Title", "Review_title", "Review_text", "Publisher", "First_author", "Genre","Review_no")], by="Review_no") # Joins cleaned reviews to original df
+
+clean_bigrams <- untokenized_data %>%
+  unnest_tokens(output = bigram, input = "clean_review", token = "ngrams", n=2, to_lower = TRUE) # Tokenize word column to bigrams
+```
+
+In text cleaning stop words and additional stop words which identified by the domain knowledge, in this case "book" and "read" also has been removed. further lemmatization technique also used in cleaning the text. After that set of text has been tokenized by words.
+
+#### Visualization after Cleaning
+
+```{r word plot after cleaning}
+word_counts <- clean_tokens %>%
+  count(word, sort = TRUE)
+
+top_words <- top_n(word_counts,10,n)$word
+
+filtered_word_counts <- filter(word_counts, word %in% top_words)
+filtered_word_counts$word <- factor(filtered_word_counts$word, levels = top_words[length(top_words):1])
+
+ggplot(filtered_word_counts, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "blue") +
+  labs(x = "Words", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+The above horizontal frequency plot of top 10 words, shows the highest frequent word is the "company" and second is the "story". Further the third (write), fourth (pip) and fifth (time) have almost similar frequencies. These nouns could be more informative than previous analysis(without cleaning) about book reviews.
+
+```{r bigram plot after cleaning}
+bigram_counts <- clean_bigrams %>%
+  count(bigram, sort = TRUE)
+
+top_bigrams <- top_n(bigram_counts,10,n)$bigram
+
+filtered_bigram_counts <- filter(bigram_counts, bigram %in% top_bigrams)
+filtered_bigram_counts$bigram <- factor(filtered_bigram_counts$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+ggplot(filtered_bigram_counts, aes(x = reorder(bigram, n), y = n)) +
+  geom_col(fill = "blue") +
+  labs(x = "Bigrams", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+Furthermore the bigram plot also shows the highest number of frequent pair of word is "liberal fascism" which is 80 times and the second frequent pair is "jim collins". The tenth pair is mussolini hitler. Last three pairs of words shows slight changes in frequency.
+
+In conclusion without conducting proper text cleaning, not only the inbuilt stop words also considering the domain knowledge, could not get a proper idea of the words in the review.
+
+#### Top 10 Words & Bigrams grouped by Title
+
+```{r grouped word_plot}
+
+# Grouped Words
+top_words <- top_n(word_counts,10,n)$word # Gets a vector of top 10 words
+
+# Groups clean_tokens by Title and counts the number of occurences of each word, and filters to only the top 10 words.
+grouped_count <- group_by(clean_tokens, Title) %>% 
+  count(word) %>%
+  filter(word %in% top_words)
+
+grouped_count$word <- factor(grouped_count$word, levels = top_words[length(top_words):1]) # Orders the top words according to overall frequency
+
+#Create the plot
+ggplot(data = grouped_count, aes(x = word, y = n, fill = Title)) + # Fill keyword allows groupings
+  geom_col(position = "dodge") + # position = dodge creates grouped bar chart
+  labs(x = "Words", y = "Fill", fill = "Book Title") +
+  coord_flip() +
+  theme_minimal()
+```
+
+In further tokenized words has been analysed grouping by book titles. Accordingly it can be observed that word "company" is the most frequent word in "Good to Great" book. The word "liberal" and "fascism" is highly found in the book of Liberal Fascism. Accodingly could be identify which book has most frequent words. based on that it can be concluded the set of most frequent words in each book title.
+The clear image is attached in the repository by the name Grouped_word_plot.png
+
+```{r grouped bigram plot}
+# Grouped Bigrams
+top_bigrams <- top_n(bigram_counts,10,n)$bigram
+
+grouped_count <- group_by(clean_bigrams, Title) %>%
+  count(bigram) %>%
+  filter(bigram %in% top_bigrams)
+
+grouped_count$bigram <- factor(grouped_count$bigram, levels = top_bigrams[length(top_bigrams):1])
+
+ggplot(data = grouped_count, aes(x = bigram, y = n, fill = Title)) +
+  geom_col(position = "dodge") +
+  labs(x = "Bigrams", y = "Fill", fill = "Book Title") +
+  coord_flip() +
+  theme_minimal()
+```
+
+When the grouping is done based on bigram the some pairs like "liberal fascism", "world war", "mussolini hitler" fully represented only by one book it is Liberal Fascism. And not seen in other books. Like wise in concluding the word pairs more relates to the book titles very significantly than single word.The clear image is attached in the repository by the name Grouped_bigram_plot.png
+
+#### Creating Word Cloud
+
+```{r Clean Word Cloud}
+suppressWarnings({
+  set.seed(1)
+  wordcloud(words = word_counts$word, 
+            freq = word_counts$n, 
+            min.freq = 10, 
+            random.order=FALSE,
+            random.color=FALSE, 
+            colors = sample(colors(), size = 10))
+})
+```
+
+The cleaned word cloud shows the highest frequent pair of word is "story company" and the second is write time. After that there are many pairs of words that has slight different (almost same) frequencies. The colour and the size represent the difference of the each pair of word types. Size represent the frequency of the word pair.
